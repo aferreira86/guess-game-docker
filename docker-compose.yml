@@ -1,0 +1,114 @@
+# =============================================================
+# docker-compose.yml - Orquestração dos Serviços
+# =============================================================
+# Serviços:
+#   db        → PostgreSQL (banco de dados persistente)
+#   backend1  → Flask (instância 1 do backend)
+#   backend2  → Flask (instância 2 do backend)
+#   frontend  → NGINX (serve o React + proxy reverso para o backend)
+#
+# Acesso: http://localhost
+# =============================================================
+
+services:
+
+  # -----------------------------------------------------------
+  # Banco de Dados PostgreSQL
+  # Para atualizar a versão, altere a tag da imagem abaixo.
+  # -----------------------------------------------------------
+  db:
+    image: postgres:16-alpine
+    container_name: guess_db
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: secretpass
+      POSTGRES_DB: postgres
+    volumes:
+      # Volume nomeado garante persistência dos dados
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - backend_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # -----------------------------------------------------------
+  # Backend Flask - Instância 1
+  # -----------------------------------------------------------
+  backend1:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: guess_backend1
+    restart: always
+    environment:
+      FLASK_APP: run.py
+      FLASK_DB_TYPE: postgres
+      FLASK_DB_USER: postgres
+      FLASK_DB_PASSWORD: secretpass
+      FLASK_DB_NAME: postgres
+      FLASK_DB_HOST: db
+      FLASK_DB_PORT: "5432"
+    networks:
+      - backend_net
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # -----------------------------------------------------------
+  # Backend Flask - Instância 2
+  # (segunda instância para balanceamento de carga)
+  # -----------------------------------------------------------
+  backend2:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: guess_backend2
+    restart: always
+    environment:
+      FLASK_APP: run.py
+      FLASK_DB_TYPE: postgres
+      FLASK_DB_USER: postgres
+      FLASK_DB_PASSWORD: secretpass
+      FLASK_DB_NAME: postgres
+      FLASK_DB_HOST: db
+      FLASK_DB_PORT: "5432"
+    networks:
+      - backend_net
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # -----------------------------------------------------------
+  # Frontend React + NGINX (proxy reverso)
+  # -----------------------------------------------------------
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: guess_frontend
+    restart: always
+    ports:
+      - "80:80"
+    networks:
+      - backend_net
+    depends_on:
+      - backend1
+      - backend2
+
+# -----------------------------------------------------------
+# Volume nomeado para persistência do PostgreSQL
+# -----------------------------------------------------------
+volumes:
+  postgres_data:
+    driver: local
+
+# -----------------------------------------------------------
+# Rede interna entre os serviços
+# -----------------------------------------------------------
+networks:
+  backend_net:
+    driver: bridge

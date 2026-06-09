@@ -1,0 +1,47 @@
+# =============================================================
+# Dockerfile - Frontend React (build) + NGINX (serve)
+# =============================================================
+# Stage 1: Build da aplicação React
+# Para atualizar a versão do Node, altere apenas a linha abaixo
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Copia package.json e package-lock.json para aproveitar cache de camadas
+COPY frontend/package*.json ./
+
+# CYPRESS_INSTALL_BINARY=0 → impede o download do binário do Cypress (~500MB).
+# Cypress é ferramenta de testes e2e, desnecessária na imagem de produção.
+# --include=prod → instala apenas dependências de produção (ignora devDependencies,
+# que incluem cypress, ts-jest, etc.)
+RUN CYPRESS_INSTALL_BINARY=0 npm ci --include=prod
+
+# Copia o restante do código do frontend
+COPY frontend/ .
+
+# A variável REACT_APP_BACKEND_URL é injetada em build-time.
+# Com NGINX como proxy reverso, o frontend chama /api no mesmo host.
+ARG REACT_APP_BACKEND_URL=/api
+ENV REACT_APP_BACKEND_URL=$REACT_APP_BACKEND_URL
+
+RUN npm run build
+
+# =============================================================
+# Stage 2: Servidor NGINX com os arquivos estáticos
+# Para atualizar a versão do NGINX, altere apenas a linha abaixo
+FROM nginx:1.27-alpine
+
+# Remove configuração padrão do nginx
+RUN rm /etc/nginx/conf.d/default.conf
+
+# Copia o arquivo de configuração do NGINX (proxy reverso + balanceamento de carga)
+# O contexto de build é a raiz do projeto (definido no docker-compose.yml),
+# portanto nginx/nginx.conf é encontrado corretamente.
+COPY nginx/nginx.conf /etc/nginx/nginx.conf
+
+# Copia os arquivos buildados do React
+COPY --from=builder /app/build /usr/share/nginx/html
+
+EXPOSE 80
+
+CMD ["nginx", "-g", "daemon off;"]
